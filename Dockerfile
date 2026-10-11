@@ -1,6 +1,3 @@
-FROM quickwit/quickwit:latest AS quickwit-src
-FROM rclone/rclone:latest AS rclone-src
-
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,11 +8,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     bash \
     procps \
+    tar \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy quickwit and rclone binaries
-COPY --from=quickwit-src /quickwit/quickwit /usr/local/bin/quickwit
-COPY --from=rclone-src /usr/local/bin/rclone /usr/local/bin/rclone
+# Install rclone
+RUN curl https://rclone.org/install.sh | bash
+
+# Install Quickwit v0.8.2
+RUN curl -L https://github.com/quickwit-oss/quickwit/releases/download/v0.8.2/quickwit-v0.8.2-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C /tmp \
+    && mv /tmp/quickwit-v0.8.2/quickwit /usr/local/bin/quickwit \
+    && rm -rf /tmp/quickwit-v0.8.2
 
 WORKDIR /app
 
