@@ -60,4 +60,4 @@ sed -i "s/listen_port: .*/listen_port: ${PORT}/" /app/quickwit.yaml
 # 5. Start Quickwit server in foreground
 echo "[4/4] Starting Quickwit service..."
 mkdir -p /app/qwdata
-exec quickwit run --config /app/quickwit.yaml
+exec quickwit run --service searcher --service metastore --config /app/quickwit.yaml
