@@ -1,0 +1,14 @@
+version: 0.8
+node_id: quickwit-node-1
+cluster_id: quickwit-cluster
+
+storage:
+  s3:
+    flavor: minio
+    endpoint: http://127.0.0.1:9000
+
+metastore_uri: s3://vids-quickwit/metastore
+default_index_root_uri: s3://vids-quickwit/indexes
+
+rest:
+  listen_port: 10000

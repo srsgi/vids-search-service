@@ -1,0 +1,101 @@
+version: 0.8
+index_id: prn
+
+doc_mapping:
+  mode: dynamic
+  field_mappings:
+    - name: url
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: domain
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: site
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: title
+      type: text
+      tokenizer: default
+      record: position
+      stored: true
+    - name: raw_title
+      type: text
+      tokenizer: default
+      stored: true
+    - name: description
+      type: text
+      tokenizer: default
+      stored: true
+    - name: tags
+      type: array<text>
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: categories
+      type: array<text>
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: performers
+      type: array<text>
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: uploader
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: studio
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: thumbnail
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: preview_url
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: duration
+      type: i64
+      fast: true
+      stored: true
+    - name: views
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: likes
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: rating
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: resolution
+      type: text
+      tokenizer: raw
+      fast: true
+      stored: true
+    - name: published_at
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: timestamp
+      type: datetime
+      fast: true
+      stored: true
+
+  timestamp_field: timestamp
+
+search_settings:
+  default_search_fields: [title, description, tags, performers]
