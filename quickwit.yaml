@@ -2,6 +2,8 @@ version: 0.8
 node_id: quickwit-node-1
 cluster_id: quickwit-cluster
 
+listen_address: 0.0.0.0
+
 storage:
   s3:
     flavor: minio

@@ -5,14 +5,25 @@ echo "=========================================="
 echo " Starting Vids Search Service (Quickwit)   "
 echo "=========================================="
 
-# 1. Start rclone S3 gateway to Google Drive in the background
+# 1. Setup rclone configuration file if token is provided
+if [ -n "$RCLONE_CONFIG_GDRIVE_TOKEN" ]; then
+  echo "Writing rclone.conf from environment..."
+  mkdir -p /root/.config/rclone
+  cat <<EOF > /root/.config/rclone/rclone.conf
+[gdrive]
+type = drive
+scope = drive
+token = ${RCLONE_CONFIG_GDRIVE_TOKEN}
+EOF
+fi
+
+# 2. Start internal rclone S3 gateway to Google Drive in the background
 echo "[1/4] Starting internal rclone S3 gateway to Google Drive..."
 rclone serve s3 \
   --addr 127.0.0.1:9000 \
   --auth-key fake,fake \
   --dir-cache-time 1m \
   gdrive:quickwit-data &
-RCLONE_PID=$!
 
 echo "[2/4] Waiting for rclone S3 gateway on 127.0.0.1:9000..."
 for i in $(seq 1 30); do
@@ -23,12 +34,12 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# 2. Configure Quickwit listen port
+# 3. Configure Quickwit listen port and address
 PORT="${PORT:-10000}"
-echo "[3/4] Configuring Quickwit to listen on port: ${PORT}"
+echo "[3/4] Configuring Quickwit listen port: ${PORT}"
 sed -i "s/listen_port: .*/listen_port: ${PORT}/" /app/quickwit.yaml
 
-# 3. Background index initializer
+# 4. Background index initializer
 (
   echo "Monitoring Quickwit readiness for auto index creation..."
   for i in $(seq 1 45); do
@@ -46,6 +57,6 @@ sed -i "s/listen_port: .*/listen_port: ${PORT}/" /app/quickwit.yaml
   done
 ) &
 
-# 4. Start Quickwit server in foreground
+# 5. Start Quickwit server in foreground
 echo "[4/4] Starting Quickwit service..."
-exec quickwit run --service searcher,indexer --config /app/quickwit.yaml
+exec quickwit run --config /app/quickwit.yaml
