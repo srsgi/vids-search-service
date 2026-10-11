@@ -9,7 +9,7 @@ echo "=========================================="
 echo "[1/4] Starting internal rclone S3 gateway to Google Drive..."
 rclone serve s3 \
   --addr 127.0.0.1:9000 \
-  --no-auth \
+  --auth-key fake,fake \
   --dir-cache-time 1m \
   gdrive:quickwit-data &
 RCLONE_PID=$!
