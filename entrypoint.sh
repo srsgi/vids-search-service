@@ -22,7 +22,7 @@ echo "[1/4] Starting internal rclone S3 gateway to Google Drive..."
 rclone serve s3 \
   --addr 127.0.0.1:9000 \
   --auth-key fake,fake \
-  --dir-cache-time 1m \
+  --dir-cache-time 5s \
   gdrive:quickwit-data &
 
 echo "[2/4] Waiting for rclone S3 gateway on 127.0.0.1:9000..."
