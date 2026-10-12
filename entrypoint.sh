@@ -39,7 +39,28 @@ PORT="${PORT:-10000}"
 echo "[3/4] Configuring Quickwit listen port: ${PORT}"
 sed -i "s/listen_port: .*/listen_port: ${PORT}/" /app/quickwit.yaml
 
-# 4. Background index initializer
+# 4. Sync domain_discovery.db from Google Drive and start SQLite DB Proxy
+echo "[3/5] Syncing domain_discovery.db from Google Drive..."
+mkdir -p /app/db
+if [ -n "$RCLONE_CONFIG_GDRIVE_TOKEN" ]; then
+  rclone copy gdrive:quickwit-data/db/domain_discovery.db /app/db/ || true
+fi
+
+PROXY_PORT="${DB_PROXY_PORT:-8001}"
+echo "Starting DB Proxy on port ${PROXY_PORT} in background..."
+PROXY_DB_PATH="/app/db/domain_discovery.db" python3 -m uvicorn db_proxy:app --host 0.0.0.0 --port "${PROXY_PORT}" &
+
+# Periodically sync db back to Google Drive every 10 minutes in background
+(
+  while true; do
+    sleep 600
+    if [ -f "/app/db/domain_discovery.db" ] && [ -n "$RCLONE_CONFIG_GDRIVE_TOKEN" ]; then
+      rclone copy /app/db/domain_discovery.db gdrive:quickwit-data/db/ || true
+    fi
+  done
+) &
+
+# 5. Background index initializer
 (
   echo "Monitoring Quickwit readiness for auto index creation..."
   for i in $(seq 1 45); do
@@ -57,7 +78,7 @@ sed -i "s/listen_port: .*/listen_port: ${PORT}/" /app/quickwit.yaml
   done
 ) &
 
-# 5. Start Quickwit server in foreground
-echo "[4/4] Starting Quickwit service..."
+# 6. Start Quickwit server in foreground
+echo "[5/5] Starting Quickwit service..."
 mkdir -p /app/qwdata
 exec quickwit run --service searcher --service metastore --config /app/quickwit.yaml

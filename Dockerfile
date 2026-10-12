@@ -10,7 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     tar \
     unzip \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir --break-system-packages fastapi uvicorn pydantic
 
 # Install rclone
 RUN curl https://rclone.org/install.sh | bash
@@ -24,6 +28,7 @@ WORKDIR /app
 
 COPY quickwit.yaml /app/quickwit.yaml
 COPY index-config.yaml /app/index-config.yaml
+COPY db_proxy.py /app/db_proxy.py
 COPY entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
