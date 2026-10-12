@@ -88,6 +88,38 @@ default_index_root_uri: s3://vids-quickwit/indexes
     return temp_yaml
 
 
+import re
+
+
+def parse_numeric_resolution(val: Any) -> Any:
+    """Normalizes resolution strings (e.g. '1080p', '4k', '720', '1920x1080') into vertical height integer (e.g. 1080, 2160, 720)."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return int(val) if val > 0 else None
+    s = str(val).strip().lower()
+    if not s or s in ("unknown", "none", "null"):
+        return None
+    if "4k" in s or "2160" in s:
+        return 2160
+    if "2k" in s or "1440" in s:
+        return 1440
+    if "1080" in s or "fhd" in s:
+        return 1080
+    if "720" in s or "hd" in s:
+        return 720
+    if "480" in s:
+        return 480
+    if "360" in s:
+        return 360
+    if "240" in s:
+        return 240
+    m = re.search(r"(\d{3,4})[pP]?", s)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def export_from_elasticsearch(es_url: str = "http://localhost:9200", index: str = "prn", limit: int = 1000) -> Path:
     """Export documents from local Elasticsearch to temporary NDJSON file."""
     output_path = LOCAL_DATA_DIR / "es_export.ndjson"
@@ -106,6 +138,8 @@ def export_from_elasticsearch(es_url: str = "http://localhost:9200", index: str 
     with open(output_path, "w", encoding="utf-8") as f:
         for hit in hits:
             doc = hit.get("_source", {})
+            if "resolution" in doc:
+                doc["resolution"] = parse_numeric_resolution(doc.get("resolution"))
             f.write(json.dumps(doc) + "\n")
             
     logger.info(f"Wrote NDJSON export to {output_path}")

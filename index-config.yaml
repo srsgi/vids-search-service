@@ -82,8 +82,7 @@ doc_mapping:
       tokenizer: raw
       stored: true
     - name: resolution
-      type: text
-      tokenizer: raw
+      type: i64
       fast: true
       stored: true
     - name: published_at
