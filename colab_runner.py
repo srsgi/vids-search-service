@@ -52,8 +52,8 @@ print("[4/6] Syncing database and packages from Google Drive...")
 os.makedirs("/content/quickwit-data/batches", exist_ok=True)
 os.makedirs("/content/quickwit-data/crawler_logs", exist_ok=True)
 os.makedirs("/content/db", exist_ok=True)
-
-subprocess.run(["rclone", "copy", "gdrive:quickwit-data/db/domain_discovery.db", "/content/db/"], check=True)
+# Sync fallback database in background so boot finishes in <30 seconds
+subprocess.Popen(["rclone", "copy", "gdrive:quickwit-data/db/domain_discovery.db", "/content/db/"])
 subprocess.run(["rclone", "copy", "gdrive:quickwit-data/packages/vids2_services.tar.gz", "/content/"], check=True)
 subprocess.run(["rclone", "copy", "gdrive:quickwit-data/packages/vids2_manifests.tar.gz", "/content/"], check=False)
 subprocess.run(["rclone", "copy", "gdrive:quickwit-data/packages/universal_video_crawler.py", "/content/"], check=True)
@@ -152,6 +152,22 @@ while True:
                 # Wait until file has not been modified for at least 10s (flush completed)
                 if now_t - os.path.getmtime(b_path) < 10:
                     continue
+
+                norm_path = b_path + ".norm"
+                with open(b_path, "r", encoding="utf-8", errors="ignore") as f_in, open(norm_path, "w", encoding="utf-8") as f_out:
+                    for line in f_in:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            doc = json.loads(line)
+                            ts = doc.get("timestamp")
+                            if ts and not str(ts).endswith("Z") and "+" not in str(ts):
+                                doc["timestamp"] = str(ts).split(".")[0] + "Z"
+                            f_out.write(json.dumps(doc) + "\\n")
+                        except Exception:
+                            pass
+
                 qw_env = os.environ.copy()
                 qw_env["AWS_ACCESS_KEY_ID"] = "fake"
                 qw_env["AWS_SECRET_ACCESS_KEY"] = "fake"
@@ -160,7 +176,7 @@ while True:
                     [
                         "quickwit", "tool", "local-ingest",
                         "--index", "prn",
-                        "--input-path", b_path,
+                        "--input-path", norm_path,
                         "--config", QW_CONFIG,
                         "--yes"
                     ],
@@ -169,6 +185,9 @@ while True:
                     text=True,
                     timeout=90
                 )
+                if os.path.exists(norm_path):
+                    os.remove(norm_path)
+
                 if ingest_res.returncode == 0:
                     with open(INGESTED_LOG, "a", encoding="utf-8") as f:
                         f.write(b_name + "\\n")

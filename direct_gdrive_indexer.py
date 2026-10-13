@@ -146,9 +146,34 @@ def export_from_elasticsearch(es_url: str = "http://localhost:9200", index: str 
     return output_path
 
 
+def normalize_ndjson_for_quickwit(input_path: Path) -> Path:
+    """Ensures strict RFC-3339 timestamps and clean types for Quickwit."""
+    norm_path = input_path.parent / (input_path.name + ".norm.ndjson")
+    count = 0
+    with open(input_path, "r", encoding="utf-8", errors="ignore") as f_in, open(norm_path, "w", encoding="utf-8") as f_out:
+        for line in f_in:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                doc = json.loads(line)
+                ts = doc.get("timestamp")
+                if ts and not str(ts).endswith("Z") and "+" not in str(ts):
+                    doc["timestamp"] = str(ts).split(".")[0] + "Z"
+                if "resolution" in doc:
+                    doc["resolution"] = parse_numeric_resolution(doc.get("resolution"))
+                f_out.write(json.dumps(doc) + "\n")
+                count += 1
+            except Exception:
+                continue
+    logger.info(f"Normalized {count} documents in {norm_path}")
+    return norm_path
+
+
 def ingest_ndjson(input_path: Path, qw_config_path: Path, index_id: str = "prn"):
     """Run quickwit tool local-ingest to build and push splits to Google Drive."""
-    logger.info(f"Indexing {input_path} into '{index_id}' and pushing directly to Google Drive...")
+    clean_path = normalize_ndjson_for_quickwit(input_path)
+    logger.info(f"Indexing {clean_path} into '{index_id}' and pushing directly to Google Drive...")
     
     env = os.environ.copy()
     env["AWS_ACCESS_KEY_ID"] = "fake"
@@ -158,12 +183,15 @@ def ingest_ndjson(input_path: Path, qw_config_path: Path, index_id: str = "prn")
     cmd = [
         "quickwit", "tool", "local-ingest",
         "--index", index_id,
-        "--input-path", str(input_path),
+        "--input-path", str(clean_path),
         "--config", str(qw_config_path),
         "--yes"
     ]
     
     res = subprocess.run(cmd, env=env)
+    if clean_path.exists() and clean_path != input_path:
+        clean_path.unlink()
+
     if res.returncode == 0:
         logger.info("✔ Documents successfully indexed directly to Google Drive!")
     else:
