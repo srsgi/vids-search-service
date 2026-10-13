@@ -12,15 +12,30 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, Header, Depends, Query
+from contextlib import asynccontextmanager
+import httpx
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, Response
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("DBProxy")
 
 DB_PATH = os.environ.get("PROXY_DB_PATH", "/app/db/domain_discovery.db")
 API_KEY = os.environ.get("DB_PROXY_API_KEY", "")
+QW_INTERNAL_URL = os.environ.get("QUICKWIT_INTERNAL_URL", "http://127.0.0.1:10001")
 
-app = FastAPI(title="Vids Domain DB Proxy", version="1.0.0")
+http_client: Optional[httpx.AsyncClient] = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global http_client
+    http_client = httpx.AsyncClient(base_url=QW_INTERNAL_URL, timeout=60.0)
+    yield
+    if http_client:
+        await http_client.aclose()
+
+app = FastAPI(title="Vids Domain DB Proxy & Search Gateway", version="1.1.0", lifespan=lifespan)
 
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
@@ -62,15 +77,58 @@ class UpdateStatusRequest(BaseModel):
 
 
 @app.get("/health")
-def health_check() -> Dict[str, Any]:
+async def health_check() -> Dict[str, Any]:
     db_exists = os.path.exists(DB_PATH)
     size = os.path.getsize(DB_PATH) if db_exists else 0
+    qw_status = "uninitialized"
+    if http_client:
+        try:
+            r = await http_client.get("/health", timeout=2.0)
+            qw_status = "live" if r.status_code == 200 else f"http_{r.status_code}"
+        except Exception as e:
+            qw_status = f"down ({type(e).__name__})"
     return {
         "status": "healthy",
+        "quickwit": qw_status,
         "db_exists": db_exists,
         "db_size_bytes": size,
         "db_path": DB_PATH,
     }
+
+
+@app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"])
+async def proxy_quickwit(path: str, request: Request) -> Response:
+    """Transparently proxies Quickwit search, version, and index operations to internal Quickwit."""
+    if not http_client:
+        raise HTTPException(status_code=503, detail="Quickwit gateway client not ready")
+
+    excluded_headers = {"host", "content-length", "connection", "transfer-encoding"}
+    req_headers = {k: v for k, v in request.headers.items() if k.lower() not in excluded_headers}
+
+    target_url = f"/api/v1/{path}"
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    body = await request.body()
+    try:
+        rp_req = http_client.build_request(
+            method=request.method,
+            url=target_url,
+            headers=req_headers,
+            content=body,
+        )
+        rp_resp = await http_client.send(rp_req, stream=True)
+
+        resp_headers = {k: v for k, v in rp_resp.headers.items() if k.lower() not in excluded_headers}
+        return StreamingResponse(
+            rp_resp.aiter_raw(),
+            status_code=rp_resp.status_code,
+            headers=resp_headers,
+            background=BackgroundTask(rp_resp.aclose),
+        )
+    except Exception as e:
+        logger.error(f"Quickwit proxy error for {target_url}: {e}")
+        raise HTTPException(status_code=502, detail=f"Bad Gateway (Quickwit): {str(e)}")
 
 
 @app.get("/api/domains/next-crawler-ready", dependencies=[Depends(verify_api_key)])

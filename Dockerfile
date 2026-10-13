@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir --break-system-packages fastapi uvicorn pydantic
+RUN pip3 install --no-cache-dir --break-system-packages fastapi uvicorn pydantic httpx
 
 # Install rclone
 RUN curl https://rclone.org/install.sh | bash

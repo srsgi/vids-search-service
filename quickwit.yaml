@@ -14,4 +14,4 @@ metastore_uri: s3://vids-quickwit/metastore
 default_index_root_uri: s3://vids-quickwit/indexes
 
 rest:
-  listen_port: 10000
+  listen_port: 10001
