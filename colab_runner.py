@@ -80,8 +80,28 @@ import urllib.request
 PROXY_URL = "https://vids-search-service.onrender.com"
 LOG_FILE = "/content/quickwit-data/crawler_logs/colab_crawler.log"
 BATCH_DIR = "/content/quickwit-data/batches"
+QW_CONFIG = "/content/quickwit_colab.yaml"
+INGESTED_LOG = "/content/quickwit-data/ingested_batches.txt"
+
 os.makedirs("/content/quickwit-data/crawler_logs", exist_ok=True)
 os.makedirs(BATCH_DIR, exist_ok=True)
+os.makedirs("/content/qwdata", exist_ok=True)
+
+# Generate Quickwit config for internal S3 gateway (:9099)
+qw_cfg_content = """version: 0.8
+node_id: colab-indexer
+data_dir: /content/qwdata
+
+storage:
+  s3:
+    flavor: minio
+    endpoint: http://127.0.0.1:9099
+
+metastore_uri: s3://vids-quickwit/metastore
+default_index_root_uri: s3://vids-quickwit/indexes
+"""
+with open(QW_CONFIG, "w", encoding="utf-8") as f:
+    f.write(qw_cfg_content)
 
 # Start internal Rclone S3 bridge (port 9099)
 if subprocess.run(["pgrep", "-f", "rclone serve s3"], capture_output=True).returncode != 0:
@@ -101,7 +121,7 @@ env["NDJSON_EXPORT_DIR"] = BATCH_DIR
 env["CRAWLER_LOG_FILE"] = LOG_FILE
 
 while True:
-    # Check if universal_video_crawler is running
+    # 1. Check if universal_video_crawler is running
     is_running = subprocess.run(["pgrep", "-f", "universal_video_crawler.py"], capture_output=True).returncode == 0
     if not is_running:
         out_f = open(LOG_FILE, "a")
@@ -113,14 +133,57 @@ while True:
             start_new_session=True,
         )
 
-    # Sync logs and batches to Google Drive
+    # 2. Autonomous Quickwit Local Ingestion of completed NDJSON batches
+    ingested_set = set()
+    if os.path.exists(INGESTED_LOG):
+        with open(INGESTED_LOG, "r", encoding="utf-8", errors="ignore") as f:
+            ingested_set = set(line.strip() for line in f if line.strip())
+
+    if os.path.exists(BATCH_DIR):
+        now_t = time.time()
+        candidates = sorted([
+            os.path.join(BATCH_DIR, f)
+            for f in os.listdir(BATCH_DIR)
+            if f.endswith(".ndjson") and f not in ingested_set
+        ])
+        for b_path in candidates[:3]:
+            b_name = os.path.basename(b_path)
+            try:
+                # Wait until file has not been modified for at least 10s (flush completed)
+                if now_t - os.path.getmtime(b_path) < 10:
+                    continue
+                qw_env = os.environ.copy()
+                qw_env["AWS_ACCESS_KEY_ID"] = "fake"
+                qw_env["AWS_SECRET_ACCESS_KEY"] = "fake"
+                qw_env["AWS_REGION"] = "us-east-1"
+                ingest_res = subprocess.run(
+                    [
+                        "quickwit", "tool", "local-ingest",
+                        "--index", "prn",
+                        "--input-path", b_path,
+                        "--config", QW_CONFIG,
+                        "--yes"
+                    ],
+                    env=qw_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=90
+                )
+                if ingest_res.returncode == 0:
+                    with open(INGESTED_LOG, "a", encoding="utf-8") as f:
+                        f.write(b_name + "\\n")
+                    ingested_set.add(b_name)
+            except Exception:
+                pass
+
+    # 3. Sync logs and batches to Google Drive
     try:
         subprocess.run(["rclone", "copy", "/content/quickwit-data/crawler_logs/", "gdrive:quickwit-data/crawler_logs/"], timeout=30, capture_output=True)
         subprocess.run(["rclone", "copy", BATCH_DIR, "gdrive:quickwit-data/batches/"], timeout=30, capture_output=True)
     except Exception:
         pass
 
-    # Send heartbeat to Render
+    # 4. Send heartbeat to Render
     try:
         batch_count = len(os.listdir(BATCH_DIR)) if os.path.exists(BATCH_DIR) else 0
         log_snippet = ""
@@ -134,6 +197,7 @@ while True:
             "status": "running",
             "metrics": {
                 "batches_written": batch_count,
+                "batches_ingested": len(ingested_set),
                 "timestamp": time.time(),
             },
             "log_snippet": log_snippet[-400:] if log_snippet else None,
