@@ -7,6 +7,7 @@ Provides fast query execution, batch status updates, and next-crawler-ready feed
 """
 
 import os
+import time
 import sqlite3
 import json
 import logging
@@ -74,6 +75,13 @@ class UpdateStatusRequest(BaseModel):
     video_urls: Optional[str] = None
     downloader_metadata: Optional[str] = None
     error_message: Optional[str] = None
+
+
+class CrawlerHeartbeatRequest(BaseModel):
+    crawler_id: str = "vids-crawler"
+    status: str = "running"
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    log_snippet: Optional[str] = None
 
 
 @app.get("/health")
@@ -200,3 +208,102 @@ def execute_query(req: QueryRequest) -> QueryResponse:
         else:
             con.commit()
             return QueryResponse(rows=[], rowcount=cur.rowcount)
+
+
+@app.post("/api/crawler/heartbeat")
+def receive_crawler_heartbeat(hb: CrawlerHeartbeatRequest) -> Dict[str, Any]:
+    """Records liveness heartbeat from active crawler instances."""
+    with get_connection() as con:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS crawler_heartbeats (
+                crawler_id TEXT PRIMARY KEY,
+                status TEXT,
+                metrics TEXT,
+                log_snippet TEXT,
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at_epoch REAL
+            )
+            """
+        )
+        now_epoch = time.time()
+        con.execute(
+            """
+            INSERT INTO crawler_heartbeats (crawler_id, status, metrics, log_snippet, last_seen_at, updated_at_epoch)
+            VALUES (?, ?, ?, ?, datetime('now', 'localtime'), ?)
+            ON CONFLICT(crawler_id) DO UPDATE SET
+                status = excluded.status,
+                metrics = excluded.metrics,
+                log_snippet = excluded.log_snippet,
+                last_seen_at = datetime('now', 'localtime'),
+                updated_at_epoch = excluded.updated_at_epoch
+            """,
+            (hb.crawler_id, hb.status, json.dumps(hb.metrics), hb.log_snippet, now_epoch)
+        )
+        con.commit()
+    return {"success": True, "crawler_id": hb.crawler_id, "timestamp": now_epoch}
+
+
+@app.get("/api/crawler/health")
+def crawler_health() -> Dict[str, Any]:
+    """Inspects crawler health, latest heartbeat, and Google Drive log status."""
+    now = time.time()
+    heartbeat_data: Optional[Dict[str, Any]] = None
+    with get_connection() as con:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS crawler_heartbeats (
+                crawler_id TEXT PRIMARY KEY,
+                status TEXT,
+                metrics TEXT,
+                log_snippet TEXT,
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at_epoch REAL
+            )
+            """
+        )
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT crawler_id, status, metrics, log_snippet, last_seen_at, updated_at_epoch
+            FROM crawler_heartbeats
+            ORDER BY updated_at_epoch DESC
+            LIMIT 1
+            """
+        )
+        row = cur.fetchone()
+        if row:
+            heartbeat_data = {
+                "crawler_id": row["crawler_id"],
+                "status": row["status"],
+                "metrics": json.loads(row["metrics"] or "{}"),
+                "log_snippet": row["log_snippet"],
+                "last_seen_at": row["last_seen_at"],
+                "updated_at_epoch": row["updated_at_epoch"],
+                "seconds_since_heartbeat": round(now - (row["updated_at_epoch"] or 0), 1),
+            }
+
+    if not heartbeat_data:
+        return {
+            "status": "offline",
+            "message": "No heartbeat received yet from crawler.",
+            "heartbeat": None,
+        }
+
+    sec_ago = heartbeat_data["seconds_since_heartbeat"]
+    if sec_ago < 300:
+        overall_status = "healthy"
+    elif sec_ago < 900:
+        overall_status = "degraded"
+    else:
+        overall_status = "stale_or_down"
+
+    return {
+        "status": overall_status,
+        "crawler_id": heartbeat_data["crawler_id"],
+        "seconds_since_heartbeat": sec_ago,
+        "last_seen_at": heartbeat_data["last_seen_at"],
+        "crawler_reported_status": heartbeat_data["status"],
+        "metrics": heartbeat_data["metrics"],
+        "log_snippet": heartbeat_data["log_snippet"],
+    }
